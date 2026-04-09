@@ -14,6 +14,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -34,12 +35,15 @@ import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
+import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.Select;
 
 public class App {
 
     static boolean running = false;
     static WebDriver driver = null;
+    static volatile boolean manualRefresh = false;
+    static volatile boolean waitForNext = false;
     
     // History management
     static final String HISTORY_FILE = "xpath_history.txt";
@@ -97,6 +101,40 @@ public class App {
         }
     }
 
+    static String normalizeUrl(String url) {
+        if (url == null) {
+            return "";
+        }
+        url = url.trim();
+        if (url.isEmpty()) {
+            return "";
+        }
+        if (!url.matches("^(?i:https?://).*")) {
+            url = "http://" + url;
+        }
+        return url;
+    }
+
+    static String getComboBoxText(JComboBox<String> combo) {
+        if (combo == null) {
+            return "";
+        }
+        // Coba ambil dari editor component (yang lebih andal)
+        try {
+            javax.swing.JTextField editor = (javax.swing.JTextField) combo.getEditor().getEditorComponent();
+            String editorText = editor.getText().trim();
+            if (!editorText.isEmpty()) {
+                return editorText;
+            }
+        } catch (Exception e) {
+            // Fallback jika gagal
+        }
+        
+        // Fallback ke selected item
+        Object selected = combo.getSelectedItem();
+        return selected == null ? "" : selected.toString().trim();
+    }
+
     public static void main(String[] args) {
 
         // ✅ Look & Feel modern
@@ -116,7 +154,7 @@ public class App {
         frame.setContentPane(mainPanel);
 
         // ===== FORM PANEL =====
-        JPanel formPanel = new JPanel(new GridLayout(6, 2, 10, 8));
+        JPanel formPanel = new JPanel(new GridLayout(8, 2, 10, 8));
 
         JComboBox<String> urlField = new JComboBox<>(urlHistory.toArray(new String[0]));
         urlField.setEditable(true);
@@ -133,6 +171,8 @@ public class App {
         xpath3Field.setSelectedItem("");
         JTextField quantityField = new JTextField("1");
         JTextField startTimeField = new JTextField("10:00:00");
+        JTextField chromeProfilePathField = new JTextField(System.getProperty("user.home") + "/Library/Application Support/Google/Chrome");
+        JTextField chromeProfileDirField = new JTextField("Default");
 
         // Enable copy and paste for all fields
         KeyAdapter copyPasteAdapter = new KeyAdapter() {
@@ -144,6 +184,7 @@ public class App {
                     if (e.getKeyCode() == KeyEvent.VK_C) {
                         // Copy
                         try {
+                            //coba
                             String selectedText = "";
                             if (e.getSource() instanceof javax.swing.JTextField) {
                                 javax.swing.JTextField field = (javax.swing.JTextField) e.getSource();
@@ -203,6 +244,10 @@ public class App {
         formPanel.add(quantityField);
         formPanel.add(new JLabel("Jam (HH:mm:ss)"));
         formPanel.add(startTimeField);
+        formPanel.add(new JLabel("Chrome profile path (optional)"));
+        formPanel.add(chromeProfilePathField);
+        formPanel.add(new JLabel("Chrome profile directory"));
+        formPanel.add(chromeProfileDirField);
 
         // ===== BUTTONS PANEL =====
         JPanel buttonPanel = new JPanel();
@@ -214,8 +259,13 @@ public class App {
         restartBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         restartBtn.setPreferredSize(new Dimension(120, 35));
 
+        JButton nextBtn = new JButton("NEXT");
+        nextBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        nextBtn.setPreferredSize(new Dimension(120, 35));
+
         buttonPanel.add(startBtn);
         buttonPanel.add(restartBtn);
+        buttonPanel.add(nextBtn);
 
         // ===== LOG PANEL =====
         JTextArea logArea = new JTextArea(10, 50);
@@ -247,14 +297,23 @@ public class App {
 
             new Thread(() -> {
                 try {
-                    String url = ((JComboBox<String>)urlField).getEditor().getItem().toString().trim();
-                    String xpath = ((JComboBox<String>)xpathField).getEditor().getItem().toString().trim();
-                    String xpath2 = ((JComboBox<String>)xpath2Field).getEditor().getItem().toString().trim();
-                    String xpath3 = ((JComboBox<String>)xpath3Field).getEditor().getItem().toString().trim();
+                    logArea.append("Starting START process...\n");
+                    String rawUrl = getComboBoxText(urlField);
+                    logArea.append("Raw URL input: '" + rawUrl + "'\n");
+                    String url = normalizeUrl(rawUrl);
+                    logArea.append("Normalized URL: '" + url + "'\n");
+                    String xpath = getComboBoxText(xpathField);
+                    String xpath2 = getComboBoxText(xpath2Field);
+                    String xpath3 = getComboBoxText(xpath3Field);
                     String quantity = quantityField.getText().trim();
                     
+                    if (url.isEmpty()) {
+                        logArea.append("ERROR: URL tidak boleh kosong\n");
+                        return;
+                    }
+
                     // Save to history
-                    if (!url.isEmpty()) urlHistory.add(url);
+                    if (!rawUrl.isEmpty()) urlHistory.add(rawUrl);
                     if (!xpath.isEmpty()) xpath1History.add(xpath);
                     if (!xpath2.isEmpty()) xpath2History.add(xpath2);
                     if (!xpath3.isEmpty()) xpath3History.add(xpath3);
@@ -281,9 +340,43 @@ public class App {
                         targetDateTime = targetDateTime.plusDays(1);
                     }
 
-                    driver = new ChromeDriver();
-                    driver.get(url);
-                    logArea.append("Chrome opened and URL loaded\n");
+                    String chromeProfilePath = chromeProfilePathField.getText().trim();
+                    String chromeProfileDir = chromeProfileDirField.getText().trim();
+                    ChromeOptions options = new ChromeOptions();
+                    options.setExperimentalOption("excludeSwitches", Arrays.asList("enable-automation"));
+                    options.setExperimentalOption("useAutomationExtension", false);
+                    options.addArguments("--disable-blink-features=AutomationControlled");
+                    options.addArguments("--disable-infobars");
+                    options.addArguments("--disable-extensions");
+                    if (!chromeProfilePath.isEmpty()) {
+                        options.addArguments("--user-data-dir=" + chromeProfilePath);
+                        if (!chromeProfileDir.isEmpty()) {
+                            options.addArguments("--profile-directory=" + chromeProfileDir);
+                        }
+                        logArea.append("Using Chrome profile path: " + chromeProfilePath + "\n");
+                        logArea.append("Using profile directory: " + chromeProfileDir + "\n");
+                    } else {
+                        logArea.append("Using default Chrome profile settings\n");
+                    }
+
+                    driver = new ChromeDriver(options);
+                    logArea.append("ChromeDriver created successfully\n");
+                    try {
+                        logArea.append("Attempting to navigate to: '" + url + "'\n");
+                        driver.get(url);
+                        logArea.append("Chrome opened and URL loaded: " + url + "\n");
+                        logArea.append("Current URL in browser: " + driver.getCurrentUrl() + "\n");
+                    } catch (Exception navigationError) {
+                        logArea.append("ERROR: driver.get() failed: " + navigationError.getMessage() + "\n");
+                        logArea.append("Retrying with navigate().to(url)\n");
+                        try {
+                            driver.navigate().to(url);
+                            logArea.append("Chrome loaded URL with navigate().to: " + url + "\n");
+                            logArea.append("Current URL after navigate: " + driver.getCurrentUrl() + "\n");
+                        } catch (Exception retryError) {
+                            logArea.append("ERROR: navigate().to() also failed: " + retryError.getMessage() + "\n");
+                        }
+                    }
                     logArea.append("Waiting until: " + targetDateTime + "\n");
 
                     while (running) {
@@ -325,15 +418,31 @@ public class App {
                                             logArea.append("FULL XPATH ENABLED → CLICK\n");
                                             element.click();
                                             logArea.append("FULL XPATH CLICKED SUCCESSFULLY\n");
+                                            logArea.append("Waiting 5 seconds for manual robot verification...\n");
+                                            Thread.sleep(5000);
+                                            logArea.append("Click NEXT button to continue to XPath ke-2\n");
+                                            waitForNext = true;
+                                            while (waitForNext && running) {
+                                                Thread.sleep(100);
+                                            }
+                                            if (!running) return;
                                         } else {
-                                            logArea.append("Element not enabled yet (displayed: " + element.isDisplayed() + ", enabled: " + element.isEnabled() + ") - refreshing...\n");
+                                            logArea.append("Element not enabled yet (displayed: " + element.isDisplayed() + ", enabled: " + element.isEnabled() + ") - waiting for NEXT button\n");
+                                            manualRefresh = false;
+                                            while (!manualRefresh && running) {
+                                                Thread.sleep(100); // Wait for NEXT button
+                                            }
+                                            if (!running) break;
                                             driver.navigate().refresh();
-                                            Thread.sleep(300); // Refresh setiap 300ms sampai enabled
                                         }
                                     } catch (Exception ex) {
-                                        logArea.append("Error during wait: " + ex.getMessage() + " - refreshing...\n");
+                                        logArea.append("Error during wait: " + ex.getMessage() + " - waiting for NEXT button\n");
+                                        manualRefresh = false;
+                                        while (!manualRefresh && running) {
+                                            Thread.sleep(100); // Wait for NEXT button
+                                        }
+                                        if (!running) break;
                                         driver.navigate().refresh();
-                                        Thread.sleep(300);
                                     }
                                 }
                                 
@@ -386,9 +495,9 @@ public class App {
                                                 
                                                 // 3. Coba partial match atau containing
                                                 if (!found) {
-                                                    java.util.List<WebElement> options = select.getOptions();
+                                                    java.util.List<WebElement> selectOptions = select.getOptions();
                                                     logArea.append("Available options: ");
-                                                    for (WebElement option : options) {
+                                                    for (WebElement option : selectOptions) {
                                                         String optText = option.getText().trim();
                                                         String optValue = option.getAttribute("value");
                                                         logArea.append("[" + optText + "|" + optValue + "] ");
@@ -468,6 +577,12 @@ public class App {
             logArea.append("Restarting application...\n");
             frame.dispose();
             App.main(new String[0]);
+        });
+
+        nextBtn.addActionListener(e -> {
+            manualRefresh = true;
+            waitForNext = false;
+            logArea.append("NEXT button clicked - continuing process\n");
         });
 
         frame.setVisible(true);
