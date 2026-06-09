@@ -1,9 +1,3 @@
-cd /Applications/development/Java/Autoklik/autostate
-printf "protocol=https\nhost=github.com\n" | git credential-osxkeychain erase
-git push -u origin maincd /Applications/development/Java/Autoklik/autostate
-printf "protocol=https\nhost=github.com\n" | git credential-osxkeychain erase
-git push -u origin main# Bota Auto Klik
-
 Aplikasi auto-clicker berbasis Java dengan GUI yang menggunakan Selenium WebDriver untuk mengotomatisasi interaksi dengan website.
 
 ## Fitur
@@ -26,8 +20,8 @@ Aplikasi auto-clicker berbasis Java dengan GUI yang menggunakan Selenium WebDriv
 
 1. Clone repository:
 ```bash
-git clone https://github.com/fadhlysyahputra02/Bota-Auto-Klik.git
-cd Bota-Auto-Klik/autostate
+git clone https://github.com/fadhlysyahputra02/Bot_autoklik.git
+cd Bot_autoklik
 ```
 
 2. Compile project dengan Maven:
